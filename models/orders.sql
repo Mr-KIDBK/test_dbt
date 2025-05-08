@@ -21,7 +21,7 @@ order_payments as (
         sum(case when payment_method = '{{ payment_method }}' then amount else 0 end) as {{ payment_method }}_amount,
         {% endfor -%}
 
-        sum(amount) as total_amount
+        sum(amount)/2 as total_amount
 
     from payments
 
