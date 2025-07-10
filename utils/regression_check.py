@@ -2,134 +2,147 @@ import os
 import requests
 import json
 import time
+import hashlib
 
-def create_github_check(status, conclusion=None, title="", summary=""):
-    """创建或更新GitHub检查状态"""
-    github_token = os.getenv('GITHUB_TOKEN')
-    repo_owner = os.getenv('REPO_OWNER')
-    repo_name = os.getenv('REPO_NAME')
-    commit_sha = os.getenv('COMMIT_SHA')
-    
-    headers = {
-        'Authorization': f'token {github_token}',
-        'Accept': 'application/vnd.github.v3+json'
-    }
-    
-    data = {
-        'name': 'Regression Test',
-        'head_sha': commit_sha,
-        'status': status,
-        'output': {
-            'title': title,
-            'summary': summary
-        }
-    }
-    
-    if conclusion:
-        data['conclusion'] = conclusion
-    
-    url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/check-runs'
-    response = requests.post(url, headers=headers, json=data)
+
+def trigger_test(payload):
+    url = "https://webhooks.aftership.com/datarecce/webhooks/recce_check"
+    response = requests.post(url, json=payload)
     return response.json()
 
-def trigger_third_party_test():
-    """触发回归测试"""
-    api_key = os.getenv('THIRD_PARTY_API_KEY')
-    # 替换为实际的第三方API端点
-    url = "https://third-party-api.com/regression-test"
-    
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json'
-    }
-    
-    data = {
-        'repo_owner': os.getenv('REPO_OWNER'),
-        'repo_name': os.getenv('REPO_NAME'),
-        'commit_sha': os.getenv('COMMIT_SHA'),
-        'pr_number': os.getenv('PR_NUMBER')
-    }
-    
-    response = requests.post(url, headers=headers, json=data)
-    return response.json()
 
 def check_test_status(test_id):
     """检查测试状态"""
-    api_key = os.getenv('THIRD_PARTY_API_KEY')
-    url = f"https://third-party-api.com/test-status/{test_id}"
-    
-    headers = {
-        'Authorization': f'Bearer {api_key}'
-    }
-    
-    response = requests.get(url, headers=headers)
-    return response.json()
+    api_key = os.getenv('API_KEY')
+    url = f"https://webhooks.aftership.com/recce/{test_id}/api/checks"
 
-def add_pr_comment(message):
-    """在PR中添加评论"""
+    headers = {
+        'api-key': api_key
+    }
+    no_check_names = []
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code >= 400:
+            return False, no_check_names
+    except requests.RequestException as e:
+        if e.response.status_code == 404:
+            print(f"waiting for regression test(id:{test_id}) to start, please wait...")
+            return False, no_check_names
+        else:
+            print(f"error requesting regression test status: {e}")
+        return False, no_check_names
+    checks = response.json()
+    flag = True
+    for check in checks:
+        check_name = check.get('name')
+        is_checked = check.get('is_checked')
+        if not is_checked:
+            flag = False
+            no_check_names.append(check_name)
+            print(f"【{check_name}】 is not checked")
+    return flag, no_check_names
+
+
+def get_existing_comment_id():
+    """获取现有的回归测试评论ID"""
     github_token = os.getenv('GITHUB_TOKEN')
     repo_owner = os.getenv('REPO_OWNER')
     repo_name = os.getenv('REPO_NAME')
     pr_number = os.getenv('PR_NUMBER')
-    
+
     headers = {
         'Authorization': f'token {github_token}',
         'Accept': 'application/vnd.github.v3+json'
     }
-    
-    data = {'body': message}
-    
+
     url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pr_number}/comments'
-    requests.post(url, headers=headers, json=data)
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        comments = response.json()
+        for comment in comments:
+            if 'Regression Test Status' in comment.get('body', ''):
+                return comment['id']
+
+    return None
+
+
+def update_or_create_pr_comment(no_check_names):
+    """更新或创建PR评论"""
+    github_token = os.getenv('GITHUB_TOKEN')
+    repo_owner = os.getenv('REPO_OWNER')
+    repo_name = os.getenv('REPO_NAME')
+    pr_number = os.getenv('PR_NUMBER')
+
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+
+    if no_check_names:
+        message = f"## Regression Test Status 🔄\n\nThe following checks are not completed:\n"
+        for name in no_check_names:
+            message += f"- ❌ {name}\n"
+        message += f"\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
+    else:
+        message = f"## Regression Test Status ✅\n\nAll checks completed!\n\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
+
+    data = {'body': message}
+
+    existing_comment_id = get_existing_comment_id()
+
+    if existing_comment_id:
+        url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{existing_comment_id}'
+        requests.patch(url, headers=headers, json=data)
+    else:
+        url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pr_number}/comments'
+        requests.post(url, headers=headers, json=data)
+
 
 def main():
-    print('---------- 开始回归测试检查 ---------')
+    print('-------- regression check running ---------')
     try:
-        # 创建初始检查状态
-        create_github_check('in_progress', title='回归测试进行中', summary='正在触发回归测试...')
-        
-        # 触发第三方测试
-        test_result = trigger_third_party_test()
-        test_id = test_result.get('test_id')
-        
-        if not test_id:
-            create_github_check('completed', 'failure', '测试触发失败', '无法触发测试')
-            return
+        repo_name = os.getenv('REPO_NAME')
+        pr_number = os.getenv('PR_NUMBER')
+        if not repo_name or not pr_number:
+            raise ValueError("REPO_NAME and PR_NUMBER environment variables must be set.")
 
-        # 轮询检查状态（最多10分钟）
-        max_attempts = 120  # 10分钟，每5秒检查一次
-        for attempt in range(max_attempts):
-            status_result = check_test_status(test_id)
-            status = status_result.get('status')
-            
-            if status == 'completed':
-                result = status_result.get('result')
-                if result == 'success':
-                    create_github_check('completed', 'success', '回归测试通过', '所有测试检查通过')
-                    return
+        test_id = hashlib.md5(f"{repo_name}_{pr_number}".encode()).hexdigest()
+
+        while True:
+            # 轮询检查状态（最多10分钟）
+            max_attempts = 120  # 10分钟，每5秒检查一次
+            for attempt in range(max_attempts):
+                is_checked, no_check_names = check_test_status(test_id)
+                if is_checked:
+                    return "pass"
                 else:
-                    # 测试失败，等待用户确认
-                    create_github_check('completed', 'failure', '回归测试失败', 
-                                      f'测试失败，请在确认后评论 `/confirm-regression {test_id}` 来重新检查')
-                    add_pr_comment(f'🔴 回归测试失败\n\n'
-                                 f'测试ID: {test_id}\n'
-                                 f'请前往确认测试结果，如果确认通过，请评论 `/confirm-regression {test_id}`')
-                    return
-            elif status == 'failed':
-                create_github_check('completed', 'failure', '测试执行失败', '测试执行失败')
-                return
-            
-            time.sleep(5)
-        
-        # 超时处理
-        create_github_check('completed', 'failure', '测试超时', 
-                          f'测试超时，请在确认后评论 `/confirm-regression {test_id}` 来重新检查')
-        add_pr_comment(f'⏰ 回归测试超时\n\n'
-                     f'测试ID: {test_id}\n'
-                     f'请前往确认测试结果，如果确认通过，请评论 `/confirm-regression {test_id}`')
-        
+                    if no_check_names:
+                        # 在PR中添加/修改评论，列出未检查的检查项
+                        update_or_create_pr_comment(no_check_names)
+                time.sleep(5)
+
+            # 超时处理
+            is_checked, no_check_names = check_test_status(test_id)
+            if is_checked:
+                return "pass"
+            else:
+                if no_check_names:
+                    continue
+                else:
+                    # 重新触发测试 todo
+                    print("？？？No checks found, re-triggering the test...")
+                    # github_context = os.getenv('GITHUB_CONTEXT')
+                    # payload = json.loads(github_context).get('event', {})
+                    # if payload:
+                    #     trigger_test(payload)
+                    # else:
+                    #     print("No payload found in GITHUB_CONTEXT, cannot re-trigger the test.")
+
+
     except Exception as e:
-        create_github_check('completed', 'failure', '检查执行错误', f'错误: {str(e)}')
+        pass
+
 
 if __name__ == '__main__':
     main()

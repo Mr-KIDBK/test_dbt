@@ -28,35 +28,9 @@ jobs:
           python3 utils/regression_check.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          THIRD_PARTY_API_KEY: ${{ secrets.THIRD_PARTY_API_KEY }}
+          API_KEY: ${{ secrets.RECCE_API_KEY }}
           PR_NUMBER: ${{ github.event.number }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_CONTEXT: ${{ toJson(github) }}
-
-  handle_user_confirmation:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      - name: Install dependencies
-        run: |
-          pip3 install requests
-
-      - name: Handle confirmation
-        run: |
-          python3 utils/handle_confirmation.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          THIRD_PARTY_API_KEY: ${{ secrets.THIRD_PARTY_API_KEY }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
