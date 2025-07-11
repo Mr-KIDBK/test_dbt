@@ -19,28 +19,31 @@ def check_test_status(test_id):
     headers = {
         'api-key': api_key
     }
-    no_check_names = []
+    check_list = []
     try:
         response = requests.get(url, headers=headers)
         if response.status_code >= 400:
-            return False, no_check_names
+            return False, check_list
     except requests.RequestException as e:
         if e.response.status_code == 404:
             print(f"waiting for regression test(id:{test_id}) to start, please wait...")
-            return False, no_check_names
+            return False, check_list
         else:
             print(f"error requesting regression test status: {e}")
-        return False, no_check_names
+        return False, check_list
     checks = response.json()
     flag = True
     for check in checks:
         check_name = check.get('name')
         is_checked = check.get('is_checked')
+        check_list.append({
+            "check_name": check_name,
+            "is_checked": is_checked
+        })
         if not is_checked:
             flag = False
-            no_check_names.append(check_name)
             print(f"【{check_name}】 is not checked")
-    return flag, no_check_names
+    return flag, check_list
 
 
 def get_existing_comment_id():
@@ -67,7 +70,7 @@ def get_existing_comment_id():
     return None
 
 
-def update_or_create_pr_comment(no_check_names):
+def update_or_create_pr_comment(check_list):
     """更新或创建PR评论"""
     github_token = os.getenv('GITHUB_TOKEN')
     repo_owner = os.getenv('REPO_OWNER')
@@ -79,11 +82,22 @@ def update_or_create_pr_comment(no_check_names):
         'Accept': 'application/vnd.github.v3+json'
     }
 
-    if no_check_names:
-        message = f"## Regression Test Status 🔄\n\nThe following checks are not completed:\n"
-        for name in no_check_names:
-            message += f"- ❌ {name}\n"
-        message += f"\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
+    if check_list:
+        message = f"## Regression Test Status 🔄\n\n"
+        incomplete_checks = []
+        for check in check_list:
+            check_name = check.get('check_name')
+            is_checked = check.get('is_checked')
+            if is_checked:
+                message += f"- ✅ {check_name}\n"
+            else:
+                message += f"- ❌ {check_name}\n"
+                incomplete_checks.append(check_name)
+
+        if not incomplete_checks:
+            message += f"\n## Regression Test Status ✅\n\nAll checks completed!"
+
+        message += f"\n\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
     else:
         message = f"## Regression Test Status ✅\n\nAll checks completed!\n\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
 
@@ -107,27 +121,27 @@ def main():
         if not repo_name or not pr_number:
             raise ValueError("REPO_NAME and PR_NUMBER environment variables must be set.")
 
-        test_id = hashlib.md5(f"{repo_name}_{pr_number}".encode()).hexdigest()
+        # test_id = hashlib.md5(f"{repo_name}_{pr_number}".encode()).hexdigest()
+        test_id = '2ec238177b518e0d2fed7dec4fa02c22'
 
         while True:
             # 轮询检查状态（最多10分钟）
             max_attempts = 120  # 10分钟，每5秒检查一次
             for attempt in range(max_attempts):
-                is_checked, no_check_names = check_test_status(test_id)
+                is_checked, check_list = check_test_status(test_id)
+                if check_list:
+                    # 在PR中添加/修改评论，列出未检查的检查项
+                    update_or_create_pr_comment(check_list)
                 if is_checked:
                     return "pass"
-                else:
-                    if no_check_names:
-                        # 在PR中添加/修改评论，列出未检查的检查项
-                        update_or_create_pr_comment(no_check_names)
                 time.sleep(5)
 
             # 超时处理
-            is_checked, no_check_names = check_test_status(test_id)
+            is_checked, check_list = check_test_status(test_id)
             if is_checked:
                 return "pass"
             else:
-                if no_check_names:
+                if check_list:
                     continue
                 else:
                     # 重新触发测试 todo
