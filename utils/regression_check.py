@@ -15,6 +15,11 @@ def trigger_test(payload):
 def check_test_status(test_id):
     """检查测试状态"""
     api_key = os.getenv('API_KEY')
+    if api_key == '1111122222':
+        print("1111111111")
+    else:
+        print("2222222222")
+
     url = f"https://webhooks.aftership.com/recce/{test_id}/api/checks"
 
     headers = {
