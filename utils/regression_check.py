@@ -3,6 +3,7 @@ import requests
 import json
 import time
 import hashlib
+from github import Github
 
 
 def trigger_test(payload):
@@ -13,7 +14,6 @@ def trigger_test(payload):
 
 def check_test_status(test_id):
     """检查测试状态"""
-    print("check_test_status...")
     api_key = os.getenv('API_KEY')
     url = f"https://webhooks.aftership.com/recce/{test_id}/api/checks"
 
@@ -43,7 +43,7 @@ def check_test_status(test_id):
         })
         if not is_checked:
             flag = False
-            print(f"【{check_name}】 is not checked")
+            # print(f"【{check_name}】 is not checked")
     return flag, check_list
 
 
@@ -52,21 +52,15 @@ def get_existing_comment_id():
     github_token = os.getenv('GITHUB_TOKEN')
     repo_owner = os.getenv('REPO_OWNER')
     repo_name = os.getenv('REPO_NAME')
-    pr_number = os.getenv('PR_NUMBER')
+    pr_number = int(os.getenv('PR_NUMBER'))
 
-    headers = {
-        'Authorization': f'token {github_token}',
-        'Accept': 'application/vnd.github.v3+json'
-    }
+    g = Github(github_token)
+    repo = g.get_repo(f"{repo_owner}/{repo_name}")
+    pr = repo.get_pull(pr_number)
 
-    url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pr_number}/comments'
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        comments = response.json()
-        for comment in comments:
-            if 'Regression Test Status' in comment.get('body', ''):
-                return comment['id']
+    for comment in pr.get_issue_comments():
+        if 'Regression Test Status' in comment.body:
+            return comment
 
     return None
 
@@ -76,12 +70,11 @@ def update_or_create_pr_comment(check_list):
     github_token = os.getenv('GITHUB_TOKEN')
     repo_owner = os.getenv('REPO_OWNER')
     repo_name = os.getenv('REPO_NAME')
-    pr_number = os.getenv('PR_NUMBER')
+    pr_number = int(os.getenv('PR_NUMBER'))
 
-    headers = {
-        'Authorization': f'token {github_token}',
-        'Accept': 'application/vnd.github.v3+json'
-    }
+    g = Github(github_token)
+    repo = g.get_repo(f"{repo_owner}/{repo_name}")
+    pr = repo.get_pull(pr_number)
 
     if check_list:
         message = f"## Regression Test Status 🔄\n\n"
@@ -102,16 +95,14 @@ def update_or_create_pr_comment(check_list):
     else:
         message = f"## Regression Test Status ✅\n\nAll checks completed!\n\n*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
 
-    data = {'body': message}
+    existing_comment = get_existing_comment_id()
 
-    existing_comment_id = get_existing_comment_id()
-
-    if existing_comment_id:
-        url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{existing_comment_id}'
-        requests.patch(url, headers=headers, json=data)
+    if existing_comment:
+        # 更新现有评论
+        existing_comment.edit(message)
     else:
-        url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{pr_number}/comments'
-        requests.post(url, headers=headers, json=data)
+        # 创建新评论
+        pr.create_issue_comment(message)
 
 
 def main():
