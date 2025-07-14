@@ -15,10 +15,6 @@ def trigger_test(payload):
 def check_test_status(test_id):
     """检查测试状态"""
     api_key = os.getenv('API_KEY')
-    if api_key == '1111122222':
-        print("1111111111")
-    else:
-        print("2222222222")
 
     url = f"https://webhooks.aftership.com/recce/{test_id}/api/checks"
 
@@ -119,7 +115,7 @@ def main():
             raise ValueError("REPO_NAME and PR_NUMBER environment variables must be set.")
 
         # test_id = hashlib.md5(f"{repo_name}_{pr_number}".encode()).hexdigest()
-        test_id = '2ec238177b518e0d2fed7dec4fa02c22'
+        test_id = 'a61b05fa53f79016db4a32da6d054a84'
 
         while True:
             # 轮询检查状态（最多10分钟）
